@@ -662,7 +662,7 @@ else:
                     st.success(f"✅ {len(all_rules)} association rules ditemukan!")
                     
                     # Summary metrics
-                    col1, col2, col3 = st.columns(3)
+                    col1, col2, col3, col4 = st.columns(4)
                     
                     with col1:
                         st.markdown(
@@ -674,6 +674,16 @@ else:
                         )
                     
                     with col2:
+                        clusters_with_rules = all_rules['Cluster'].nunique()
+                        st.markdown(
+                            create_metric_card(
+                                "Clusters with Rules",
+                                f"{clusters_with_rules}"
+                            ),
+                            unsafe_allow_html=True
+                        )
+                    
+                    with col3:
                         avg_confidence = all_rules['confidence'].mean()
                         st.markdown(
                             create_metric_card(
@@ -683,7 +693,7 @@ else:
                             unsafe_allow_html=True
                         )
                     
-                    with col3:
+                    with col4:
                         avg_lift = all_rules['lift'].mean()
                         st.markdown(
                             create_metric_card(
@@ -761,7 +771,129 @@ else:
                     )
                     
                 else:
-                    st.warning("⚠️ Tidak ada association rules yang ditemukan dengan parameter saat ini. Coba turunkan threshold minimum support atau confidence.")
+                    st.warning("⚠️ Tidak ada association rules yang ditemukan dengan parameter saat ini.")
+                    
+                    st.markdown("### 🔍 Diagnosis & Solusi")
+                    
+                    # Analisis transaksi
+                    total_trans = df_clean['Transaction_ID'].nunique()
+                    items_per_trans = df_clean.groupby('Transaction_ID')['Product_Category'].nunique()
+                    multi_item_trans = (items_per_trans >= 2).sum()
+                    multi_item_pct = multi_item_trans / total_trans * 100
+                    
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        st.markdown("**📊 Statistik Transaksi:**")
+                        st.metric("Total Transaksi", f"{total_trans:,}")
+                        st.metric("Transaksi Multi-Item", f"{multi_item_trans:,}")
+                        st.metric("Persentase Multi-Item", f"{multi_item_pct:.1f}%")
+                    
+                    with col2:
+                        st.markdown("**💡 Rekomendasi Parameter:**")
+                        if multi_item_pct < 10:
+                            st.error("❌ Transaksi multi-item < 10% - Sangat rendah!")
+                            st.markdown(f"""
+                            Coba parameter ini:
+                            - Support: **0.005** (0.5%)
+                            - Confidence: **0.1** (10%)
+                            - Lift: **1.0**
+                            """)
+                        elif multi_item_pct < 20:
+                            st.warning("⚠️ Transaksi multi-item < 20% - Rendah")
+                            st.markdown(f"""
+                            Coba parameter ini:
+                            - Support: **0.01** (1%)
+                            - Confidence: **0.15** (15%)
+                            - Lift: **1.0**
+                            """)
+                        else:
+                            st.info("ℹ️ Transaksi multi-item cukup")
+                            st.markdown(f"""
+                            Coba turunkan parameter:
+                            - Support: **{min_support/2:.3f}**
+                            - Confidence: **{min_confidence-0.1:.2f}**
+                            - Lift: **1.0**
+                            """)
+                    
+                    st.markdown("---")
+                    
+                    # Tampilkan co-occurrence analysis
+                    st.markdown("### 📈 Analisis Co-Occurrence (Alternatif)")
+                    st.info("Menampilkan pasangan kategori yang sering muncul bersama, tanpa threshold minimum")
+                    
+                    # Hitung co-occurrence
+                    from itertools import combinations
+                    
+                    transactions_grouped = (df_clean
+                                           .groupby('Transaction_ID')['Product_Category']
+                                           .apply(lambda x: list(set(x)))
+                                           .values)
+                    
+                    multi_item_trans_list = [t for t in transactions_grouped if len(t) >= 2]
+                    
+                    if len(multi_item_trans_list) > 0:
+                        cooccurrence = {}
+                        for transaction in multi_item_trans_list:
+                            for pair in combinations(sorted(transaction), 2):
+                                cooccurrence[pair] = cooccurrence.get(pair, 0) + 1
+                        
+                        cooc_df = pd.DataFrame([
+                            {
+                                'Category A': pair[0].replace('_', ' ').title(),
+                                'Category B': pair[1].replace('_', ' ').title(),
+                                'Frequency': count,
+                                'Percentage': f"{count / len(multi_item_trans_list) * 100:.1f}%"
+                            }
+                            for pair, count in cooccurrence.items()
+                        ]).sort_values('Frequency', ascending=False)
+                        
+                        st.markdown(f"**Top 20 Pasangan Kategori:**")
+                        st.dataframe(cooc_df.head(20), use_container_width=True)
+                        
+                        # Visualisasi
+                        fig = px.bar(
+                            cooc_df.head(15),
+                            x='Frequency',
+                            y=cooc_df.head(15)['Category A'] + ' + ' + cooc_df.head(15)['Category B'],
+                            orientation='h',
+                            title='Top 15 Co-Occurrence Patterns',
+                            labels={'y': 'Product Pairs'},
+                            color='Frequency',
+                            color_continuous_scale='Viridis'
+                        )
+                        fig.update_layout(**plot_theme(), height=500)
+                        st.plotly_chart(fig, use_container_width=True)
+                        
+                        st.success("💡 Gunakan pasangan di atas sebagai dasar strategi bundling!")
+                    else:
+                        st.error("❌ Tidak ada transaksi dengan 2+ items dalam dataset")
+                        st.markdown("""
+                        **Kemungkinan penyebab:**
+                        - Setiap transaksi hanya berisi 1 produk
+                        - Data perlu diagregasi berbeda (misal: per tanggal per customer)
+                        """)
+                    
+                    # Rekomendasi tetap dibuat berdasarkan RFM
+                    st.markdown("---")
+                    st.markdown("### 💼 Rekomendasi Strategi (Berdasarkan RFM)")
+                    st.info("Meskipun tidak ada association rules, strategi tetap dapat dibuat berdasarkan karakteristik RFM cluster")
+                    
+                    recommendations = apriori_analyzer.get_all_recommendations()
+                    
+                    for rec in recommendations:
+                        with st.expander(f"🎯 Cluster {rec['cluster_id']} — {rec['customer_count']} pelanggan"):
+                            st.markdown(f"**Profil RFM:** {rec['avg_rfm_str']}")
+                            
+                            for strategy in rec['strategies']:
+                                st.markdown(f"""
+                                <div class="custom-card">
+                                    <strong style="color: #667eea;">{strategy['type']}</strong><br>
+                                    {strategy['description']}<br>
+                                    <small style="color: #b8b8d1;">{strategy['rationale']}</small><br>
+                                    <small style="color: #b8b8d1;">{strategy['metrics']}</small>
+                                </div>
+                                """, unsafe_allow_html=True)
     
     except Exception as e:
         st.error(f"❌ Error: {str(e)}")
