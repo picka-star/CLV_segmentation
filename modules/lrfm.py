@@ -1,14 +1,24 @@
 import pandas as pd
+import numpy as np
 
-def compute_lrfm(df):
-    snapshot_date = df["Transaction_Date"].max() + pd.Timedelta(days=1)
-
-    lrfm = df.groupby("CustomerID").agg({
-        "Tenure_Months": "max",
-        "Transaction_Date": lambda x: (snapshot_date - x.max()).days,
-        "Transaction_ID": "count",
-        "Total_Amount": "sum"
-    }).reset_index()
-
-    lrfm.columns = ["CustomerID", "Length", "Recency", "Frequency", "Monetary"]
-    return lrfm
+class LRFAnalyzer:
+    """LRFM Analysis (Length, Recency, Frequency, Monetary)"""
+    
+    def __init__(self):
+        pass
+    
+    def calculate_lrfm(self, df):
+        """Calculate LRFM values"""
+        # Length: Customer tenure
+        # Recency: Days since last purchase
+        # Frequency: Number of purchases
+        # Monetary: Total spending
+        
+        lrfm = df.groupby('CustomerID').agg(
+            Length=('Transaction_Date', lambda x: (x.max() - x.min()).days),
+            Recency=('Transaction_Date', lambda x: (pd.Timestamp.now() - x.max()).days),
+            Frequency=('Transaction_ID', 'nunique'),
+            Monetary=('Total_Price', 'sum')
+        ).reset_index()
+        
+        return lrfm
